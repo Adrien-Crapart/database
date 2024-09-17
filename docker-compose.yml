@@ -1,18 +1,14 @@
-version: '3'
-
 volumes:
   postgres-data:
     driver: local
   redis-data:
     driver: local
-  # redisinsight-data:
-  #   driver: local
-  pg-admin-data:
+  redisinsight-data:
     driver: local
-  # mysql-data:
-  #   driver: local
-  # mongodb-data:
-  #   driver: local
+  mysql-data:
+    driver: local
+  mongodb-data:
+    driver: local
 
 networks:
   network-system:
@@ -23,13 +19,14 @@ services:
   redis:
     container_name: redis
     image: redis:latest
-    command: redis-server --requirepass redispass
+    restart: unless-stopped
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-password}
     healthcheck:
       test: [ "CMD", "redis-cli", "ping" ]
       interval: 5s
       timeout: 30s
       retries: 10
-    restart: on-failure
     volumes:
       - redis-data:/var/lib/redis/
     ports:
@@ -37,115 +34,81 @@ services:
     networks:
       - network-system
 
+  redisinsight:
+    container_name: redis-insight
+    image: redislabs/redisinsight:latest
+    volumes:
+      - redisinsight-data:/var/lib/redisinsight/
+    ports:
+      - "8001:8001"
+    restart: unless-stopped
+    depends_on:
+      - redis
+    networks:
+      - network-system
+
   postgres:
     container_name: postgres
-    image: kartoza/postgis:13.0
-    command: [ "/usr/local/bin/docker-entrypoint.sh", "postgres" ]
-    restart: on-failure
+    image: postgis/postgis:16-master
+    restart: always
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-admin}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-password}
+      - POSTGRES_DB=${POSTGRES_DB:-data}
+      - POSTGRES_MULTIPLE_EXTENSIONS=postgis,postgis_topology
     volumes:
       - postgres-data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
-    environment:
-      - POSTGRES_USER=adrien
-      - POSTGRES_PASSWORD=adrien9583!
-      - POSTGRES_DBNAME=data,airflow
-      - ALLOW_IP_RANGE=0.0.0.0/0
     healthcheck:
-      test: [ "CMD", "pg_isready", "-U", "adrien", "adrien9583!" ]
-      interval: 30s
-      timeout: 10s
-      retries: 5
+      test: pg_isready -U admin -h localhost
+      interval: 300s
+      timeout: 5s
+      retries: 10
     networks:
       - network-system
-  # redisinsight:
-  #   container_name: redis-insight
-  #   image: redislabs/redisinsight:latest
-  #   volumes:
-  #     - redisinsight-data:/var/lib/redisinsight/
-  #   ports:
-  #     - "8001:8001"
-  #   restart: on-failure
-  #   depends_on:
-  #     - redis
-  #   networks:
-  #     - network-system
-
-  pgadmin:
-    container_name: pgadmin4
-    image: dpage/pgadmin4:latest
-    restart: on-failure
-    volumes:
-      - pg-admin-data:/var/lib/pgadmin
-    environment:
-      - PGADMIN_DEFAULT_EMAIL=adrien.crapart@gmail.com
-      - PGADMIN_DEFAULT_PASSWORD=Adrien9583!
-      - PGADMIN_LISTEN_PORT=80
-    ports:
-      - "5050:80"
+  
+  pgbouncer:
+    container_name: pgbouncer
+    image: edoburu/pgbouncer:1.15.0
+    restart: always
     depends_on:
       - postgres
+    ports:
+      - "6432:6432"
+    environment:
+      - AUTH_FILE=${AUTH_FILE:-/etc/pgbouncer/userlist.txt}
+      - AUTH_TYPE=${AUTH_TYPE:-md5}
+      - DB_HOST=${DB_HOST:-postgres}
+      - DB_PORT=${DB_PORT:-5432}
+      - DB_NAME=${DB_NAME:-data}
+      - DB_USER=${DB_USER:-admin}
+      - DB_PASSWORD=${DB_PASSWORD:-password}
+      - POOL_MODE=${POOL_MODE:-transaction}
+      - MAX_CLIENT_CONN=${MAX_CLIENT_CONN:-100}
+      - DEFAULT_POOL_SIZE=${DEFAULT_POOL_SIZE:-20}
+      - MIN_POOL_SIZE=${MIN_POOL_SIZE:-5}
+      - RESERVE_POOL_SIZE=${RESERVE_POOL_SIZE:-5}
+      - RESERVE_POOL_TIMEOUT=${RESERVE_POOL_TIMEOUT:-5}
+      - SERVER_RESET_QUERY=${SERVER_RESET_QUERY:-DISCARD ALL}
+      - SERVER_CHECK_DELAY=${SERVER_CHECK_DELAY:-30}
+    volumes:
+      - ./pgbouncer/userlist.txt:${AUTH_FILE:-/etc/pgbouncer/userlist.txt}
     networks:
       - network-system
-  # elastic:
-  #   container_name: elasticsearch
-  #   image: docker.elastic.co/elasticsearch/elasticsearch:8.3.3
-  #   environment:
-  #     - xpack.security.enabled=false
-  #     - discovery.type=single-node
-  #     - ESJAVA_OPTS=-Xms750m -Xmx750m
-  #   restart: on-failure
-  #   ports:
-  #     - "9200:9200"
-  #   depends_on:
-  #     - postgres
-  #   networks:
-  #     - network-system
 
-  # mysql:
-  #   container_name: mysql
-  #   image: mysql:latest
-  #   environment:
-  #     - MYSQL_ROOT_PASSWORD=Adrien9583!
-  #     - MYSQL_ROOT_HOST=localhost
-  #   ports:
-  #     - "3306:3306"
-  #   volumes:
-  #     - mysql-data:/var/lib/mysql
-  #   networks:
-  #     - network-system
-
-  # mongodb:
-  #   container_name: mongodb
-  #   image: mongo:latest
-  #   environment:
-  #     - PUID=1000
-  #     - PGID=1000
-  #   volumes:
-  #     - mongodb-data:/data/db
-  #   ports:
-  #     - "27017:27017"
-  #   restart: unless-stopped
-  #   networks:
-  #     - network-system
-
-  # mongo-express:
-  #   container_name: mongo-express
-  #   image: mongo-express
-  #   restart: always
-  #   ports:
-  #     - "28081:8081"
-  #   environment:
-  #     ME_CONFIG_MONGODB_SERVER: mongodb
-  #     ME_CONFIG_BASICAUTH_USERNAME: admin
-  #     ME_CONFIG_BASICAUTH_PASSWORD: changeme
-  #     #ME_CONFIG_MONGODB_AUTH_DATABASE: admin
-  #     ME_CONFIG_MONGODB_ADMINUSERNAME: mongoadmin
-  #     ME_CONFIG_MONGODB_ADMINPASSWORD: mongoadmin
-  #     ME_CONFIG_MONGODB_URL: mongo://mongoadmin:mongoadmin@mongodb:27017/
-  #   depends_on:
-  #     - mongodb
-  #   networks:
-  #     - network-system
-
+  mongodb:
+    container_name: mongodb
+    image: mongo:latest
+    restart: unless-stopped
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=${MONGO_INITDB_ROOT_USERNAME:-admin}
+      - MONGO_INITDB_ROOT_PASSWORD=${MONGO_INITDB_ROOT_PASSWORD:-password}
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb-data:/data/db
+      - mongodb-data:/data/configdb
+    networks:
+      - network-system
 
